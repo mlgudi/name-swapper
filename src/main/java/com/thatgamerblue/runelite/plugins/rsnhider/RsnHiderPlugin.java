@@ -289,7 +289,7 @@ public class RsnHiderPlugin extends Plugin
 		//noinspection ConstantConditions
 		String chatboxPlayerName = chatbox[0];
 		String swappedName = swapNames(chatboxPlayerName);
-		if (forceUpdate || Text.standardize(swappedName).equals(Text.standardize(chatboxPlayerName)))
+		if (forceUpdate || !Text.standardize(swappedName).equals(Text.standardize(chatboxPlayerName)))
 		{
 			chatbox[0] = swappedName;
 		}
