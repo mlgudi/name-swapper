@@ -28,9 +28,11 @@ import com.google.inject.Provides;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.ScriptID;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.MenuOpened;
 import net.runelite.api.events.OverheadTextChanged;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetInfo;
@@ -40,7 +42,14 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.Text;
+
+import java.awt.image.BufferedImage;
+import java.util.HashMap;
+import java.util.Map;
 
 /*
 Mental breakdown 2: electric boogaloo
@@ -50,13 +59,15 @@ Peace to:
 	r189, he.cc
 */
 @PluginDescriptor(
-	name = "RSN Hider",
-	description = "Hides your rsn for streamers.",
-	tags = {"twitch"},
+	name = "Name Changer",
+	description = "Change the names of your player and other players.",
+	tags = {"twitch", "youtube"},
 	enabledByDefault = false
 )
 public class RsnHiderPlugin extends Plugin
 {
+	private static final BufferedImage ICON = ImageUtil.loadImageResource(RsnHiderPlugin.class, "icon.png");
+
 	@Inject
 	private Client client;
 
@@ -64,12 +75,19 @@ public class RsnHiderPlugin extends Plugin
 	private ClientThread clientThread;
 
 	@Inject
+	ClientToolbar clientToolbar;
+
+	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private RsnHiderConfig config;
 
-	private String fakeRsn;
-	private boolean forceUpdate = false;
+	private RsnHiderPanel panel;
+	private NavigationButton navButton;
 
-	private static final String ALPHA_NUMERIC_STRING = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+	public HashMap<String, String> namesToSwap;
+	private boolean forceUpdate = false;
 
 	@Provides
 	private RsnHiderConfig getConfig(ConfigManager configManager)
@@ -77,27 +95,69 @@ public class RsnHiderPlugin extends Plugin
 		return configManager.getConfig(RsnHiderConfig.class);
 	}
 
+	public void loadNames() {
+		namesToSwap.clear();
+		String[] lines = config.namesToSwap().split("\n");
+
+		for (String line : lines) {
+			String[] parts = line.split(",", 2);
+
+			if (parts.length == 2) {
+				namesToSwap.put(parts[0].trim(), parts[1].trim());
+			}
+		}
+	}
+
+	public void saveNames() {
+		StringBuilder sb = new StringBuilder();
+		for (Map.Entry<String, String> entry : namesToSwap.entrySet()) {
+			sb.append(entry.getKey()).append(",").append(entry.getValue()).append("\n");
+
+		}
+
+		if (sb.length() > 0) {
+			sb.setLength(sb.length() - 1);
+		}
+		config.namesToSwap(sb.toString());
+		configManager.setConfiguration("namechanger", "namesToSwap", sb.toString());
+	}
+
 	@Override
 	public void startUp()
 	{
-		setFakeRsn();
+		namesToSwap = new HashMap<>();
+		loadNames();
+
+		panel = new RsnHiderPanel(this);
+
+		navButton = NavigationButton.builder()
+				.tooltip("Name Swapper")
+				.icon(ICON)
+				.panel(panel)
+				.build();
+
+		clientToolbar.addNavigation(navButton);
 	}
 
 	@Override
 	public void shutDown()
 	{
+		clientToolbar.removeNavigation(navButton);
+		namesToSwap.clear();
+		panel = null;
+		navButton = null;
 		clientThread.invokeLater(() -> client.runScript(ScriptID.CHAT_PROMPT_INIT));
 	}
 
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (!event.getGroup().equals("rsnhider"))
+		if (!event.getGroup().equals("nameswapper"))
 		{
 			return;
 		}
 
-		setFakeRsn();
+		loadNames();
 	}
 
 	@Subscribe
@@ -108,7 +168,9 @@ public class RsnHiderPlugin extends Plugin
 			return;
 		}
 
-		if (config.hideWidgets())
+		swapHoverText();
+
+		if (config.changeWidgets())
 		{
 			// do every widget
 			for (Widget widgetRoot : client.getWidgetRoots())
@@ -118,14 +180,69 @@ public class RsnHiderPlugin extends Plugin
 		}
 		else
 		{
-			// just do the chatbox
 			updateChatbox();
 		}
 	}
 
-	private void setFakeRsn() {
-		forceUpdate = true;
-		fakeRsn = config.customRsn().equals("") ? randomAlphaNumeric(12) : config.customRsn();
+	public void swapHoverText()
+	{
+		if (client.isMenuOpen())
+		{
+			return;
+		}
+
+		MenuEntry[] menuEntries = client.getMenuEntries();
+		int last = menuEntries.length - 1;
+
+		if (last < 0)
+		{
+			return;
+		}
+
+		MenuEntry hover = menuEntries[last];
+
+		String target = hover.getTarget();
+		String option = hover.getOption();
+		String swappedTarget = swapNames(target);
+		String swappedOption = swapNames(option);
+		hover.setTarget(swappedTarget);
+		hover.setOption(swappedOption);
+
+	}
+
+	@Subscribe
+	public void onMenuOpened(MenuOpened event)
+	{
+		MenuEntry[] entries = event.getMenuEntries();
+
+		for (MenuEntry entry : entries)
+		{
+			String target = entry.getTarget();
+			String option = entry.getOption();
+			String swappedTarget = swapNames(target);
+			String swappedOption = swapNames(option);
+			entry.setTarget(swappedTarget);
+			entry.setOption(swappedOption);
+		}
+	}
+
+	private String swapNames(String textIn) {
+		for (Map.Entry<String, String> entry : namesToSwap.entrySet()) {
+			String originalName = entry.getKey();
+			String newName = entry.getValue();
+
+			String standardized = Text.standardize(originalName);
+
+			while (Text.standardize(textIn).contains(standardized)) {
+				int idx = textIn.replace("\u00A0", " ").toLowerCase().indexOf(originalName.toLowerCase());
+				int length = originalName.length();
+				String partOne = textIn.substring(0, idx);
+				String partTwo = textIn.substring(idx + length);
+				textIn = partOne + newName + partTwo;
+			}
+		}
+
+		return textIn;
 	}
 
 	/**
@@ -141,7 +258,7 @@ public class RsnHiderPlugin extends Plugin
 
 		if (widget.getText() != null)
 		{
-			widget.setText(replaceRsn(widget.getText()));
+			widget.setText(swapNames(widget.getText()));
 		}
 
 		for (Widget child : widget.getStaticChildren())
@@ -170,10 +287,11 @@ public class RsnHiderPlugin extends Plugin
 		String[] chatbox = chatboxTypedText.getText().split(":", 2);
 
 		//noinspection ConstantConditions
-		String playerRsn = client.getLocalPlayer().getName();
-		if (forceUpdate || Text.standardize(chatbox[0]).contains(Text.standardize(playerRsn)))
+		String chatboxPlayerName = chatbox[0];
+		String swappedName = swapNames(chatboxPlayerName);
+		if (forceUpdate || Text.standardize(swappedName).equals(Text.standardize(chatboxPlayerName)))
 		{
-			chatbox[0] = fakeRsn;
+			chatbox[0] = swappedName;
 		}
 
 		forceUpdate = false;
@@ -189,56 +307,22 @@ public class RsnHiderPlugin extends Plugin
 			return;
 		}
 
-		String replaced = replaceRsn(event.getMessage());
+		String replaced = swapNames(event.getMessage());
 		event.setMessage(replaced);
 		event.getMessageNode().setValue(replaced);
 
-		if (event.getName() == null)
-		{
+		if (event.getName() == null) {
 			return;
 		}
 
-		boolean isLocalPlayer =
-			Text.standardize(event.getName()).equalsIgnoreCase(Text.standardize(client.getLocalPlayer().getName()));
-
-		if (isLocalPlayer)
-		{
-			event.setName(fakeRsn);
-			event.getMessageNode().setName(fakeRsn);
-		}
+		String newName = swapNames(event.getName());
+		event.setName(newName);
+		event.getMessageNode().setName(newName);
 	}
 
 	@Subscribe
 	private void onOverheadTextChanged(OverheadTextChanged event)
 	{
-		event.getActor().setOverheadText(replaceRsn(event.getOverheadText()));
-	}
-
-	private String replaceRsn(String textIn)
-	{
-		//noinspection ConstantConditions
-		String playerRsn = client.getLocalPlayer().getName();
-		String standardized = Text.standardize(playerRsn);
-		while (Text.standardize(textIn).contains(standardized))
-		{
-			int idx = textIn.replace("\u00A0", " ").toLowerCase().indexOf(playerRsn.toLowerCase());
-			int length = playerRsn.length();
-			String partOne = textIn.substring(0, idx);
-			String partTwo = textIn.substring(idx + length);
-			textIn = partOne + fakeRsn + partTwo;
-		}
-		return textIn;
-	}
-
-	private static String randomAlphaNumeric(int count)
-	{
-		StringBuilder builder = new StringBuilder();
-		int i = count;
-		while (i-- != 0)
-		{
-			int character = (int) (Math.random() * ALPHA_NUMERIC_STRING.length());
-			builder.append(ALPHA_NUMERIC_STRING.charAt(character));
-		}
-		return builder.toString();
+		event.getActor().setOverheadText(swapNames(event.getOverheadText()));
 	}
 }

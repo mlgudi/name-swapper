@@ -4,26 +4,28 @@ import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
-@ConfigGroup("rsnhider")
+@ConfigGroup("namechanger")
 public interface RsnHiderConfig extends Config
 {
 	@ConfigItem(
-		name = "Hide in widgets (Lag warning)",
-		keyName = "hideWidgets",
-		description = "Hides your RSN everywhere. Might lag your game."
+		name = "Change names in widgets (Lag warning)",
+		keyName = "changeWidgets",
+		description = "Change names everywhere. Might lag your game."
 	)
-	default boolean hideWidgets()
+	default boolean changeWidgets()
 	{
 		return false;
 	}
 
 	@ConfigItem(
-		name = "Custom rsn",
-		keyName = "customRsn",
-		description = "Use a custom rsn instead of a random rsn"
+		name = "Names to Swap",
+		keyName = "namesToSwap",
+		description = "Use the panel to modify this, unless you are pasting a pre-made config."
 	)
-	default String customRsn()
+	default String namesToSwap()
 	{
 		return "";
 	}
+
+	void namesToSwap(String namesToSwap);
 }
